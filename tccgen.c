@@ -7502,7 +7502,10 @@ again:
                     gexpr();
                     vpop();
                 }
-                skip(';');
+                /* make semicolon at the end of the line optional */
+                if (tok == ';') {
+                    skip(';');
+                }
             }
         }
     }

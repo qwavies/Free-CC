@@ -1,4 +1,4 @@
-<h1 align="center">A Modified Version of <a href="https://github.com/TinyCC/tinycc">TCC (Tiny C Compiler)</a> Without the need for Semicolons! </h1>
+<h1 align="center">Free-CC: A Modified Version of <a href="https://github.com/TinyCC/tinycc">TCC (Tiny C Compiler)</a> Without the need for Semicolons! </h1>
 
 <p align="center">If the compiler is smart enough to figure out where the semicolons <em>should</em> go, then why need them in the first place? -Aristole, probably</p>
 

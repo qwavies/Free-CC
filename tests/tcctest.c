@@ -1173,6 +1173,10 @@ void char_short_test()
        the presence of undefined behaviour (like __csf is).  */
     var1 = csf(unsigned char,0x89898989);
     var4 = csf(signed char,0xabababab);
+#ifdef __clang__
+    /* on macos 15 arm64 this prints -1987475063 instead of 137 */
+    var1 &= 0xff;
+#endif
     printf("promote char/short funcret %d "LONG_LONG_FORMAT"\n", var1, var4);
     printf("promote char/short fumcret VA %d %d %d %d\n",
         csf(unsigned short,0xcdcdcdcd),
@@ -2941,14 +2945,12 @@ void old_style_function_test(void)
 
 void alloca_test()
 {
-#if defined __i386__ || defined __x86_64__ || defined __arm__
     char *p = alloca(16);
     strcpy(p,"123456789012345");
     printf("alloca: p is %s\n", p);
     char *demo = "This is only a test.\n";
     /* Test alloca embedded in a larger expression */
     printf("alloca: %s\n", strcpy(alloca(strlen(demo)+1),demo) );
-#endif
 }
 
 void *bounds_checking_is_enabled()
@@ -4208,7 +4210,6 @@ double get100 () { return 100.0; }
 
 void callsave_test(void)
 {
-#if defined __i386__ || defined __x86_64__ || defined __arm__
   int i, s; double *d; double t;
   s = sizeof (double);
   printf ("callsavetest: %d\n", s);
@@ -4221,7 +4222,6 @@ void callsave_test(void)
      generates a segfault.  */
   i = d[0] > get100 ();
   printf ("%d\n", i);
-#endif
 }
 
 

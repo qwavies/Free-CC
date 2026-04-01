@@ -1701,10 +1701,8 @@ ST_FUNC void gbound_args(int nb_args)
             gfunc_call(1);
             func_bound_add_epilog = 1;
         }
-#if defined TCC_TARGET_I386 || defined TCC_TARGET_X86_64
         if (v == TOK_alloca)
             func_bound_add_epilog = 1;
-#endif
 #if TARGETOS_NetBSD
         if (v == TOK_longjmp) /* undo rename to __longjmp14 */
             sv->sym->asm_label = TOK___bound_longjmp;
@@ -2506,7 +2504,7 @@ static void gen_opic(int op)
     }
 }
 
-#if defined TCC_TARGET_X86_64 || defined TCC_TARGET_I386
+#if defined TCC_TARGET_X86_64 || defined TCC_TARGET_I386 || defined TCC_TARGET_ARM64
 # define gen_negf gen_opf
 #elif defined TCC_TARGET_ARM
 void gen_negf(int op)
@@ -3099,6 +3097,9 @@ op_err:
 #endif
             type1 = vtop[-1].type;
             vpush_type_size(pointed_type(&vtop[-1].type), &align);
+            if (!(vtop[-1].type.t & VT_UNSIGNED)) {
+                gen_cast_s(VT_PTRDIFF_T);
+            }
             gen_op('*');
 #ifdef CONFIG_TCC_BCHECK
             if (tcc_state->do_bounds_check && !CONST_WANTED) {
@@ -3591,8 +3592,7 @@ static void cast_error(CType *st, CType *dt)
 static void verify_assign_cast(CType *dt)
 {
     CType *st, *type1, *type2;
-    Sym *sym;
-    int dbt, sbt, qualwarn, lvl, compat;
+    int dbt, sbt, qualwarn, lvl;
 
     st = &vtop->type; /* source type */
     dbt = dt->t & VT_BTYPE;
@@ -3646,29 +3646,8 @@ static void verify_assign_cast(CType *dt)
 		   base types, though, in particular for unsigned enums
 		   and signed int targets.  */
             } else {
-                compat = 0;
-                /* Don't warn if the source struct (recursively) contains
-                   destination struct as the first member. */
-                if (dbt == VT_STRUCT && sbt == VT_STRUCT
-                    && !IS_UNION(type2->t)
-                    ) {
-                    sym = type2->ref->next;
-                    while (sym != NULL && (sym->type.t & VT_BTYPE) == VT_STRUCT
-                        ) {
-                        if (is_compatible_unqualified_types(type1, &sym->type)
-                            ) {
-                            compat = 1;
-                            break;
-                        }
-                        if (IS_UNION(sym->type.t))
-                            break;
-                        sym = sym->type.ref->next;
-                    }
-                }
-                if( !compat ) {
-                    tcc_warning("assignment from incompatible pointer type");
-                    break;
-                }
+                tcc_warning("assignment from incompatible pointer type");
+                break;
             }
         }
         if (qualwarn)
@@ -8747,9 +8726,8 @@ static int decl(int l)
         while (1) { /* iterate thru each declaration */
             type = btype;
 	    ad = adbase;
-            type_decl(&type, &ad, &v, TYPE_DIRECT);
+            type_decl(&type, &ad, &v, l == VT_CMP ? TYPE_DIRECT | TYPE_PARAM : TYPE_DIRECT);
             /*ptype("decl", &type, v);*/
-
             if ((type.t & VT_BTYPE) == VT_FUNC) {
                 if ((type.t & VT_STATIC) && (l != VT_CONST))
                     tcc_error("function without file scope cannot be static");

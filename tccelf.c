@@ -145,6 +145,9 @@ ST_FUNC void tccelf_delete(TCCState *s1)
     dynarray_reset(&s1->priv_sections, &s1->nb_priv_sections);
 
     tcc_free(s1->sym_attrs);
+#ifdef TCC_TARGET_RISCV64
+    tcc_free(s1->pcrel_hi_entries);
+#endif
     symtab_section = NULL; /* for tccrun.c:rt_printline() */
 }
 
@@ -1127,6 +1130,10 @@ static void relocate_section(TCCState *s1, Section *s, Section *sr)
     addr_t tgt, addr;
     int is_dwarf = s->sh_num >= s1->dwlo && s->sh_num < s1->dwhi;
 
+#ifdef TCC_TARGET_RISCV64
+    s1->nb_pcrel_hi_entries = 0;
+#endif
+
     qrel = (ElfW_Rel *)sr->data;
     for_each_elem(sr, 0, rel, ElfW_Rel) {
 	if (s->data == NULL) /* bss */
@@ -1237,6 +1244,17 @@ static int prepare_dynamic_rel(TCCState *s1, Section *sr)
             break;
 #if defined(TCC_TARGET_I386)
         case R_386_PC32:
+	{
+	    ElfW(Sym) *sym = &((ElfW(Sym) *)symtab_section->data)[sym_index];
+            /* Hidden defined symbols can and must be resolved locally.
+               We're misusing a PLT32 reloc for this, as that's always
+               resolved to its address even in shared libs.  */
+	    if (sym->st_shndx != SHN_UNDEF &&
+		ELFW(ST_VISIBILITY)(sym->st_other) == STV_HIDDEN) {
+                rel->r_info = ELFW(R_INFO)(sym_index, R_386_PLT32);
+	        break;
+	    }
+	}
 #elif defined(TCC_TARGET_X86_64)
         case R_X86_64_PC32:
 	{
@@ -1455,6 +1473,18 @@ redo:
                     continue;
             }
 
+#ifdef TCC_TARGET_I386
+            if ((type == R_386_PLT32 || type == R_386_PC32) &&
+		sym->st_shndx != SHN_UNDEF &&
+                (ELFW(ST_VISIBILITY)(sym->st_other) != STV_DEFAULT ||
+		 ELFW(ST_BIND)(sym->st_info) == STB_LOCAL ||
+		 s1->output_type & TCC_OUTPUT_EXE)) {
+		if (pass != 0)
+		    continue;
+                rel->r_info = ELFW(R_INFO)(sym_index, R_386_PC32);
+                continue;
+            }
+#endif
 #ifdef TCC_TARGET_X86_64
             if ((type == R_X86_64_PLT32 || type == R_X86_64_PC32) &&
 		sym->st_shndx != SHN_UNDEF &&
@@ -2419,8 +2449,10 @@ static int layout_sections(TCCState *s1, int *sec_order, struct dyn_inf *d)
         if (s->sh_type != SHT_NOBITS)
             file_offset += s->sh_size;
 
-        ph->p_filesz = file_offset - ph->p_offset;
-        ph->p_memsz = addr - ph->p_vaddr;
+        if (ph) {
+            ph->p_filesz = file_offset - ph->p_offset;
+            ph->p_memsz = addr - ph->p_vaddr;
+        }
     }
 
     /* Fill other headers */
@@ -2587,6 +2619,10 @@ static int tcc_output_elf(TCCState *s1, FILE *f, int phnum, ElfW(Phdr) *phdr)
 
 #if TARGETOS_FreeBSD || TARGETOS_FreeBSD_kernel
     ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
+#elif TARGETOS_OpenBSD
+    ehdr.e_ident[EI_OSABI] = ELFOSABI_OPENBSD;
+#elif TARGETOS_NetBSD
+    ehdr.e_ident[EI_OSABI] = ELFOSABI_NETBSD;
 #elif defined TCC_TARGET_ARM && defined TCC_ARM_EABI
     ehdr.e_flags = EF_ARM_EABI_VER5;
     ehdr.e_flags |= s1->float_abi == ARM_HARD_FLOAT
@@ -3067,7 +3103,7 @@ static void alloc_sec_names(TCCState *s1, int is_obj)
 }
 
 /* Output an elf .o file */
-static int elf_output_obj(TCCState *s1, const char *filename)
+LIBTCCAPI int elf_output_obj(TCCState *s1, const char *filename)
 {
     Section *s;
     int i, ret, file_offset;

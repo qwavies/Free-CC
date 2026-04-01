@@ -444,7 +444,8 @@ void load(int r, SValue *sv)
             b = 0xdb, r = 5; /* fldt */
         } else if ((ft & VT_TYPE) == VT_BYTE || (ft & VT_TYPE) == VT_BOOL) {
             b = 0xbe0f;   /* movsbl */
-        } else if ((ft & VT_TYPE) == (VT_BYTE | VT_UNSIGNED)) {
+        } else if ((ft & VT_TYPE) == (VT_BYTE | VT_UNSIGNED) ||
+		   (ft & VT_TYPE) == (VT_BOOL | VT_UNSIGNED)) {
             b = 0xb60f;   /* movzbl */
         } else if ((ft & VT_TYPE) == VT_SHORT) {
             b = 0xbf0f;   /* movswl */
@@ -538,7 +539,8 @@ void load(int r, SValue *sv)
                     o(0x44 + REG_VALUE(r)*8); /* %xmmN */
                     o(0xf024);
                 } else {
-                    assert((v >= TREG_XMM0) && (v <= TREG_XMM7));
+		    if (!nocode_wanted)
+                        assert((v >= TREG_XMM0) && (v <= TREG_XMM7));
                     if ((ft & VT_BTYPE) == VT_FLOAT) {
                         o(0x100ff3);
                     } else {
@@ -548,7 +550,8 @@ void load(int r, SValue *sv)
                     o(0xc0 + REG_VALUE(v) + REG_VALUE(r)*8);
                 }
             } else if (r == TREG_ST0) {
-                assert((v >= TREG_XMM0) && (v <= TREG_XMM7));
+		if (!nocode_wanted)
+                    assert((v >= TREG_XMM0) && (v <= TREG_XMM7));
                 /* gen_cvt_ftof(VT_LDOUBLE); */
                 /* movsd %xmmN,-0x10(%rsp) */
                 o(0x110ff2);
@@ -931,11 +934,6 @@ void gfunc_call(int nb_args)
 #endif
     }
     vtop--;
-}
-
-void tcc_run_start(int (*prog_main)(int, char **, char **), int cnt, char **var)
-{
-    fprintf(stderr, "tcc -nostdlib -run not implement for TCC_TARGET_PE\n");
 }
 
 #define FUNC_PROLOG_SIZE 11
@@ -1436,20 +1434,6 @@ void gfunc_call(int nb_args)
     if (args_size)
         gadd_sp(args_size);
     vtop--;
-}
-
-void tcc_run_start(int (*prog_main)(int, char **, char **), int cnt, char **var)
-{
-#ifdef __x86_64__
-    void *sp;
-
-    __asm__("subq %1, %%rsp\n"
-	    "\tmovq %%rsp, %0"
-	    : "=r" (sp)
-	    : "r" ((((size_t) cnt + 1) & -2) * sizeof(char *)));
-    memcpy(sp, var, cnt * sizeof(char *));
-    __asm__("jmp *%0" : : "r" (prog_main));
-#endif
 }
 
 #define FUNC_PROLOG_SIZE 11

@@ -274,6 +274,7 @@ static int arm64_type_size(int t)
     case VT_DOUBLE: return 3;
     case VT_LDOUBLE: return 4;
     case VT_BOOL: return 0;
+    case VT_VOID: return 0;
     }
     assert(0);
     return 0;
@@ -476,7 +477,7 @@ static void arm64_sym(int r, Sym *sym, unsigned long addend)
 		int t = r ? 0 : 1;
 		o(0xf81f0fe0 | t);            /* str xt, [sp, #-16]! */
 		arm64_movimm(t, addend & ~0xfffffful); // use xt for addent
-		o(0x91000000 | r | (t << 5)); /* add xr, xt, #0 */
+		o(0x8B000000 | (t << 16) | (r << 5) | r); /* add xr, xr, xt */
 		o(0xf84107e0 | t);            /* ldr xt, [sp], #16 */
 	    }
         }
@@ -503,17 +504,19 @@ ST_FUNC void load(int r, SValue *sv)
     }
 
     if (svr == (VT_CONST | VT_LVAL)) {
+	uint64_t i = sv->c.i;
+
 	if (sv->sym)
             arm64_sym(30, sv->sym, // use x30 for address
-	              arm64_check_offset(0, arm64_type_size(svtt), sv->c.i));
+	              arm64_check_offset(0, arm64_type_size(svtt), i));
 	else
-	    arm64_movimm (30, sv->c.i);
+	    arm64_movimm (30, i), i = 0;
         if (IS_FREG(r))
             arm64_ldrv(arm64_type_size(svtt), fltr(r), 30,
-		       arm64_check_offset(1, arm64_type_size(svtt), sv->c.i));
+		       arm64_check_offset(1, arm64_type_size(svtt), i));
         else
             arm64_ldrx(!(svtt&VT_UNSIGNED), arm64_type_size(svtt), intr(r), 30,
-		       arm64_check_offset(1, arm64_type_size(svtt), sv->c.i));
+		       arm64_check_offset(1, arm64_type_size(svtt), i));
         return;
     }
 
@@ -621,17 +624,19 @@ ST_FUNC void store(int r, SValue *sv)
     }
 
     if (svr == (VT_CONST | VT_LVAL)) {
+	uint64_t i = sv->c.i;
+
 	if (sv->sym)
             arm64_sym(30, sv->sym, // use x30 for address
-		      arm64_check_offset(0, arm64_type_size(svtt), sv->c.i));
+		      arm64_check_offset(0, arm64_type_size(svtt), i));
 	else
-	    arm64_movimm (30, sv->c.i);
+	    arm64_movimm (30, i), i = 0;
         if (IS_FREG(r))
             arm64_strv(arm64_type_size(svtt), fltr(r), 30,
-		       arm64_check_offset(1, arm64_type_size(svtt), sv->c.i));
+		       arm64_check_offset(1, arm64_type_size(svtt), i));
         else
             arm64_strx(arm64_type_size(svtt), intr(r), 30,
-		       arm64_check_offset(1, arm64_type_size(svtt), sv->c.i));
+		       arm64_check_offset(1, arm64_type_size(svtt), i));
         return;
     }
 
@@ -1167,25 +1172,6 @@ ST_FUNC void gfunc_call(int nb_args)
     tcc_free(t);
 }
 
-void tcc_run_start(int (*prog_main)(int, char **, char **), int cnt, char **var)
-{
-#if defined(__aarch64__)
-#if defined(__TINYC__)
-    // FIXME: immplement arm64 assembler
-    fprintf(stderr, "tcc -nostdlib -run not implement for arm64\n");
-#else
-    void *sp;
-
-    __asm__("sub sp, sp, %1\n"
-            "\tmov %0, sp"
-            : "=r" (sp)
-            : "r" ((((size_t) cnt + 1) & -2) * sizeof(char *)));
-    memcpy(sp, var, cnt * sizeof(char *));
-    __asm__("br %0" : : "r" (prog_main));
-#endif
-#endif
-}
-
 static unsigned long arm64_func_va_list_stack;
 static int arm64_func_va_list_gr_offs;
 static int arm64_func_va_list_vr_offs;
@@ -1370,6 +1356,10 @@ ST_FUNC void gen_va_arg(CType *t)
         o(0x540000ad); // b.le .+20
 #endif
         o(0xf9400000 | r1 | r0 << 5); // ldr x(r1),[x(r0)] // __stack
+        if (align == 16) {
+            o(0x91003c00 | r1 | r1 << 5); // add x(r1),x(r1),#15
+            o(0x927cec00 | r1 | r1 << 5); // and x(r1),x(r1),#-16
+        }
         o(0x9100001e | r1 << 5 | n << 10); // add x30,x(r1),#(n)
         o(0xf900001e | r0 << 5); // str x30,[x(r0)] // __stack
 #if !defined(TCC_TARGET_MACHO)
@@ -1771,6 +1761,7 @@ static void arm64_gen_opil(int op, uint32_t l)
         o(0x4b000000 | l << 31 | x | a << 5 | b << 16); // sub
         break;
     case '/':
+    case TOK_PDIV:
         o(0x1ac00c00 | l << 31 | x | a << 5 | b << 16); // sdiv
         break;
     case '^':
@@ -1813,7 +1804,6 @@ static void arm64_gen_opil(int op, uint32_t l)
         o(0x1ac02400 | l << 31 | x | a << 5 | b << 16); // lsr
         break;
     case TOK_UDIV:
-    case TOK_PDIV:
         o(0x1ac00800 | l << 31 | x | a << 5 | b << 16); // udiv
         break;
     case TOK_UGE:
@@ -1859,6 +1849,37 @@ ST_FUNC void gen_opf(int op)
 {
     uint32_t x, a, b, dbl;
 
+    if (op == TOK_NEG) {
+        switch (vtop[0].type.t & VT_BTYPE) {
+        case VT_LDOUBLE:
+            vpush_helper_func(TOK___negtf2);
+            vrott(2);
+            gfunc_call(1);
+            vpushi(0);
+            vtop->type.t = VT_LDOUBLE;
+            vtop->r = REG_FRET;
+            break;
+
+        case VT_FLOAT:
+        case VT_DOUBLE:
+            gv(RC_FLOAT);
+            dbl = (vtop[0].type.t & VT_BTYPE) == VT_DOUBLE;
+
+            a = fltr(vtop[0].r);
+            vtop--;
+            x = get_reg(RC_FLOAT);
+            vtop++;
+            vtop[0].r = x;
+            x = fltr(x);
+
+            o(0x1e214000 | dbl << 22 | x | a << 5);
+            break;
+        default:
+            assert(0);
+        }
+        return;
+    }
+
     if (vtop[0].type.t == VT_LDOUBLE) {
         CType type = vtop[0].type;
         int func = 0;
@@ -1887,6 +1908,7 @@ ST_FUNC void gen_opf(int op)
             o(0x7100001f); // cmp w0,#0
             o(0x1a9f07e0 | (uint32_t)cond << 12); // cset w0,(cond)
         }
+        arm64_vset_VT_CMP(op);
         return;
     }
 

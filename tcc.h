@@ -385,7 +385,7 @@ extern long double strtold (const char *__nptr, char **__endptr);
 #elif defined TCC_TARGET_ARM64
 # include "arm64-gen.c"
 # include "arm64-link.c"
-# include "arm-asm.c"
+# include "arm64-asm.c"
 #elif defined TCC_TARGET_C67
 # define TCC_TARGET_COFF
 # include "coff.h"
@@ -939,6 +939,9 @@ struct TCCState {
 
 #ifdef TCC_TARGET_RISCV64
     struct pcrel_hi { addr_t addr, val; } last_hi;
+    struct pcrel_hi *pcrel_hi_entries;
+    int nb_pcrel_hi_entries;
+    int alloc_pcrel_hi_entries;
     #define last_hi s1->last_hi
 #endif
 
@@ -1797,7 +1800,6 @@ ST_FUNC const char *dlerror(void);
 ST_FUNC void *dlsym(void *handle, const char *symbol);
 #endif
 ST_FUNC void tcc_run_free(TCCState *s1);
-ST_FUNC void tcc_run_start(int (*prog_main)(int, char **, char **), int cnt, char **var);
 #endif
 
 /* ------------ tcctools.c ----------------- */

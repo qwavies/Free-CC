@@ -40,7 +40,7 @@
 #elif defined(TCC_TARGET_ARM64)
 #include "arm64-gen.c"
 #include "arm64-link.c"
-#include "arm-asm.c"
+#include "arm64-asm.c"
 #elif defined(TCC_TARGET_C67)
 #include "c67-gen.c"
 #include "c67-link.c"
@@ -264,9 +264,9 @@ ST_FUNC void libc_free(void *ptr)
 /* global so that every tcc_alloc()/tcc_free() call doesn't need to be changed */
 static void *(*reallocator)(void*, unsigned long) = default_reallocator;
 
-LIBTCCAPI void tcc_set_realloc(TCCReallocFunc *realloc)
+LIBTCCAPI void tcc_set_realloc(TCCReallocFunc *my_realloc)
 {
-    reallocator = realloc ? realloc : default_reallocator;
+    reallocator = my_realloc ? my_realloc : default_reallocator;
 }
 
 /* in case MEM_DEBUG is #defined */
@@ -791,7 +791,7 @@ ST_FUNC int tcc_open(TCCState *s1, const char *filename)
 }
 
 /* compile the file opened in 'file'. Return non zero if errors. */
-static int tcc_compile(TCCState *s1, int filetype, const char *str, int fd)
+static int tcc_compile(TCCState *s1, int filetype, const char *str, int fd, const char *filename)
 {
     /* Here we enter the code section where we use the global variables for
        parsing and code generation (tccpp.c, tccgen.c, <target>-gen.c).
@@ -807,8 +807,16 @@ static int tcc_compile(TCCState *s1, int filetype, const char *str, int fd)
 
         if (fd == -1) {
             int len = strlen(str);
-            tcc_open_bf(s1, "<string>", len);
+            tcc_open_bf(s1, filename ? filename : "<string>", len);
             memcpy(file->buffer, str, len);
+	    if (s1->do_debug && filename) {
+		FILE *fp = fopen(filename, "w");
+
+		if (fp) {
+		    fputs(str, fp);
+		    fclose(fp);
+		}
+	    }
         } else {
             tcc_open_bf(s1, str, 0);
             file->fd = fd;
@@ -838,7 +846,12 @@ static int tcc_compile(TCCState *s1, int filetype, const char *str, int fd)
 
 LIBTCCAPI int tcc_compile_string(TCCState *s, const char *str)
 {
-    return tcc_compile(s, s->filetype, str, -1);
+    return tcc_compile(s, s->filetype, str, -1, NULL);
+}
+
+LIBTCCAPI int tcc_compile_string_file(TCCState *s, const char *str, const char *filename)
+{
+    return tcc_compile(s, s->filetype, str, -1, filename);
 }
 
 /* define a preprocessor symbol. value can be NULL, sym can be "sym=val" */
@@ -1233,7 +1246,7 @@ ST_FUNC int tcc_add_file_internal(TCCState *s1, const char *filename, int flags)
         return tcc_add_binary(s1, flags, filename, fd);
 
     dynarray_add(&s1->target_deps, &s1->nb_target_deps, tcc_strdup(filename));
-    return tcc_compile(s1, flags, filename, fd);
+    return tcc_compile(s1, flags, filename, fd, NULL);
 }
 
 LIBTCCAPI int tcc_add_file(TCCState *s, const char *filename)
@@ -1674,6 +1687,7 @@ static const TCCOption tcc_options[] = {
     { "C", 0, 0 },
     { "-param", 0, TCC_OPTION_HAS_ARG },
     { "pedantic", 0, 0 },
+    { "pie", 0, 0 },
     { "pipe", 0, 0 },
     { "s", 0, 0 },
     { "traditional", 0, 0 },
@@ -1885,13 +1899,8 @@ PUB_FUNC int tcc_parse_args(TCCState *s, int *pargc, char ***pargv)
             args_parser_add_file(s, r, s->filetype);
             empty = 0;
         dorun:
-            if (run) {
-                /* tcc -run <file> <args...> */
-                if (tcc_set_options(s, run) < 0)
-                    return -1;
-                x = 0;
-                goto extra_action;
-            }
+            if (run)
+                break;
             continue;
         }
         /* Also allow "tcc <files...> -run -- <args...>" */
@@ -2205,6 +2214,12 @@ unsupported_option:
     }
     if (s->link_optind < s->link_argc)
         return tcc_error_noabort("argument to '-Wl,%s' is missing", s->link_argv[s->link_optind]);
+    if (run) {
+        if (*run && tcc_set_options(s, run) < 0)
+            return -1;
+        x = 0;
+        goto extra_action;
+    }
     if (!empty)
         return 0;
     if (s->verbose == 2)
